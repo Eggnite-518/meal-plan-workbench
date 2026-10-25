@@ -208,7 +208,7 @@ export function libraryFood(record,row,index=0) {
   nutritionPer100g.calories=num(record.calorie,'热量')*100/base;
   if(nutritionPer100g.calories<=0 || nutritionPer100g.protein+nutritionPer100g.fat+nutritionPer100g.carbs>100.5)throw new Error(`${row.queryName}的营养数据不完整或不合理，请换一条库记录`);
   const portions=(record.showUnits||[]).filter(u=>u.type==='custom'&&Number(u.weight)>0&&Number(u.weight)<=1200).map(u=>({grams:Number(u.weight),label:`1${u.name}`}));
-  return {id:`matched_${index+1}`,slot:row.slot,name:row.queryName,preference:row.preference||'best',nutritionPer100g,libraryRecord:clone(record),dataSource:'real_library',ingredients:Array.isArray(record.ingredients)?clone(record.ingredients):[],allergens:Array.isArray(record.allergens)?clone(record.allergens):[],portions,tags:[],tagsComplete:false,tagsReviewed:false,supplementSource:null};
+  return {id:`matched_${index+1}`,slot:row.slot,name:row.queryName,preference:row.preference||'best',nutritionPer100g,libraryRecord:clone(record),dataSource:'real_library',ingredients:Array.isArray(record.ingredients)?clone(record.ingredients):[],allergens:Array.isArray(record.allergens)?clone(record.allergens):[],portions,tags:[],tagsComplete:false,tagsConfirmed:false,tagsReviewed:false,supplementSource:null};
 }
 
 export function confirmLibraryMatches(rows,includeMissing=false) {
@@ -217,7 +217,7 @@ export function confirmLibraryMatches(rows,includeMissing=false) {
     const record=row.options.find(f=>String(f.id||f._id)===row.selectedId);
     const missing=reason=>{
       issues.push({name:row.queryName,reason});
-      if(includeMissing)foods.push({id:`matched_${index+1}`,slot:row.slot,name:row.queryName,preference:row.preference||'best',nutritionPer100g:null,dataSource:'pending',ingredients:[],allergens:[],portions:[],tags:[],tagsComplete:false,tagsReviewed:false});
+      if(includeMissing)foods.push({id:`matched_${index+1}`,slot:row.slot,name:row.queryName,preference:row.preference||'best',nutritionPer100g:null,dataSource:'pending',ingredients:[],allergens:[],portions:[],tags:[],tagsComplete:false,tagsConfirmed:false,tagsReviewed:false});
     };
     if(!record){missing(row.error||(row.status==='pending'?'尚未查询':'没有名称完全一致的记录'));return;}
     try{
@@ -265,7 +265,7 @@ export function mergeFoodSupplements(foods,input,scope='all') {
     if(!Array.isArray(patch.tags)||patch.tags.some(k=>!Object.hasOwn(ALL_TAGS,k)))throw new Error(`${f.name}的标签无效`);
     if(!Array.isArray(portions)||portions.length>12||portions.some(p=>!Number.isFinite(p.grams)||p.grams<1||p.grams>1200||typeof p.label!=='string'||!p.label.trim()))throw new Error(`${f.name}的份量档位无效`);
     const mealTags=patch.mealTags||f.mealTags;
-    return {...f,...nutrition,ingredients:clone(ingredients),allergens:clone(allergens),portions:clone(portions),tags:clone(patch.tags),...(mealTags?{mealTags:clone(mealTags)}:{}),tagsComplete:ingredients.length>0,tagsReviewed:ingredients.length>0&&portions.length>0&&validMealTags(mealTags),supplementSource:'ai_supplement'};
+    return {...f,...nutrition,ingredients:clone(ingredients),allergens:clone(allergens),portions:clone(portions),tags:clone(patch.tags),...(mealTags?{mealTags:clone(mealTags)}:{}),tagsComplete:ingredients.length>0,tagsConfirmed:true,tagsReviewed:ingredients.length>0&&portions.length>0&&validMealTags(mealTags),supplementSource:'ai_supplement'};
   });
 }
 const ingredientTags = { milk:/牛奶|酸奶|乳清|奶酪/, egg:/鸡蛋|蛋清|蛋黄/, soy:/大豆|豆腐|豆浆|酱油/, wheat:/小麦|面粉|面包|意面/, peanut:/花生/, treeNut:/核桃|杏仁|腰果/, fish:/鱼/, shellfish:/虾|蟹|贝/, sesame:/芝麻/, pork:/猪|肉丸/, beef:/牛肉/, poultry:/鸡胸|鸡丁|鸡肉|火鸡/ };
@@ -277,8 +277,12 @@ export function sampleBundle() {
   const template=defaultTemplate();
   const base=SAMPLE_FOODS.filter(f=>getSlots(template).includes(f.slot)).map(clone);
   base.push(...SAMPLE_FOODS.filter(f=>f.slot==='drink').map(f=>({...clone(f),slot:'protein'})));
-  const foods=base.map(f=>({...f, tags:inferredTags(f),mealTags:['早餐','午餐','晚餐'], tagsReviewed:true, dataSource:'sample',nutritionPer100g:{...f.nutritionPer100g,calories:Math.round((f.nutritionPer100g.protein*4+f.nutritionPer100g.fat*9+f.nutritionPer100g.carbs*4)*10)/10}}));
+  const foods=base.map(f=>({...f, tags:inferredTags(f),mealTags:['早餐','午餐','晚餐'], tagsConfirmed:true,tagsReviewed:true, dataSource:'sample',nutritionPer100g:{...f.nutritionPer100g,calories:Math.round((f.nutritionPer100g.protein*4+f.nutritionPer100g.fat*9+f.nutritionPer100g.carbs*4)*10)/10}}));
   return {template,candidates:{slotFoods:getSlots(template).map(slot=>({slot,foods:foods.filter(f=>f.slot===slot).map(f=>f.name)}))},foods,notes:'内置演示估算，供测试程序链路；不是已审核营养数据库。'};
+}
+// 空 tags/allergens 是有效的“没有命中标签”，不能等同于标签未确认。
+export function isTagDataConfirmed(f) {
+  return validMealTags(f.mealTags) && (f.tagsConfirmed===true || (Array.isArray(f.tags) && Array.isArray(f.allergens)));
 }
 export function validatePool(bundle, requireReviewed=false) {
   validateBundleTemplate(bundle.template);
@@ -313,16 +317,64 @@ export function filterPool(bundle,user) {
   verifiedFoods.forEach(f=>{
     const hits=f.tags.filter(k=>blocked.includes(k)||(k==='crustacean'&&blocked.includes('shellfish'))||(k==='gluten'&&blocked.includes('wheat'))||(k==='seafood'&&blocked.includes('shellfish')));
     const vegetarian=user.habit==='vegetarian' && f.tags.some(k=>['fish','shellfish','crustacean','seafood','pork','beef','lamb','offal','poultry'].includes(k));
-    const unknown=blocked.length>0 && !f.tagsReviewed;
+    // 标签与份量是两个独立的确认状态。缺少份量时不能把食物误判成“忌口标签未确认”。
+    const tagDataIncomplete=!isTagDataConfirmed(f);
+    const unknown=blocked.length>0 && tagDataIncomplete;
     const text=(user.avoids || '').split(/[,，、;；\n]/).map(s=>s.trim()).filter(Boolean).find(word=>[f.name,...f.ingredients,...f.allergens].join('|').includes(word));
-    if (hits.length || vegetarian || unknown || text) excluded.push({...f,reason:unknown?'限制条件下，未确认的标签不参与生成':vegetarian?'不符合蛋奶素饮食':hits.length?`包含${hits.map(k=>ALL_TAGS[k]).join('、')}`:`包含自定义忌口：${text}`});
+    if (hits.length || vegetarian || unknown || text) {
+      const preferenceReason=vegetarian?'不符合蛋奶素饮食':hits.length?`包含${hits.map(k=>ALL_TAGS[k]).join('、')}`:`包含自定义忌口：${text}`;
+      excluded.push({...f,exclusionType:unknown?'unreviewed_tags':'preference',reason:unknown?`忌口相关标签尚未确认，暂不参与筛选${hits.length?`（可能包含${hits.map(k=>ALL_TAGS[k]).join('、')}）`:''}`:preferenceReason});
+    }
     else accepted.push(f);
   });
+  const shortageDetails=(slot,mealId)=>{
+    const slotFoods=verifiedFoods.filter(f=>f.slot===slot);
+    const acceptedSlotFoods=accepted.filter(f=>f.slot===slot);
+    const eligible=slotFoods.filter(f=>supportsMeal(f,mealId));
+    const acceptedEligible=acceptedSlotFoods.filter(f=>supportsMeal(f,mealId));
+    const excludedEligible=excluded.filter(f=>f.slot===slot&&supportsMeal(f,mealId));
+    const unreviewedEligible=excludedEligible.filter(f=>f.exclusionType==='unreviewed_tags');
+    const preferenceExcludedEligible=excludedEligible.filter(f=>f.exclusionType==='preference');
+    let reasonCode='mixed_shortage';
+    if(slotFoods.length===0) reasonCode='no_slot_candidates';
+    else if(acceptedEligible.length===0 && eligible.length===0 && excludedEligible.length===0) reasonCode='no_meal_tags';
+    else if(acceptedEligible.length===0 && unreviewedEligible.length>0 && preferenceExcludedEligible.length>0) reasonCode='mixed_shortage';
+    else if(acceptedEligible.length===0 && unreviewedEligible.length>0) reasonCode='unreviewed_tags';
+    else if(acceptedEligible.length===0 && preferenceExcludedEligible.length>0) reasonCode='filtered_by_preferences';
+    else if(acceptedEligible.length===0 && eligible.length===0) reasonCode='no_meal_tags';
+    const reason={
+      no_slot_candidates:`该槽位没有可用候选食物，请补充${SLOT_NAMES[slot]}食物`,
+      no_meal_tags:`有${slotFoods.length}种${SLOT_NAMES[slot]}候选，但没有食物带“${MEAL_NAMES[mealId]}”餐次标签，请在“数据与标签”补充餐次标签`,
+      filtered_by_preferences:`原有${eligible.length}种适合${MEAL_NAMES[mealId]}的候选，全部被当前忌口或饮食条件排除，请调整条件或补充候选`,
+      unreviewed_tags:`原有${eligible.length}种适合${MEAL_NAMES[mealId]}的候选中，有${unreviewedEligible.length}种的忌口相关标签尚未确认，程序暂不使用，请先到“数据与标签”完成标签确认`,
+      mixed_shortage:`原有${eligible.length}种适合${MEAL_NAMES[mealId]}的候选中，有${preferenceExcludedEligible.length}种被当前忌口排除，另有${unreviewedEligible.length}种标签尚未确认，请先补齐标签或调整条件`,
+    }[reasonCode];
+    return {totalSlotCount:slotFoods.length,mealEligibleCount:eligible.length,filteredSlotCount:acceptedSlotFoods.length,acceptedMealEligibleCount:acceptedEligible.length,canRelaxMealTag:acceptedSlotFoods.length>0,excludedEligibleCount:excludedEligible.length,unreviewedEligibleCount:unreviewedEligible.length,preferenceExcludedEligibleCount:preferenceExcludedEligible.length,excludedReasons:[...new Set(excludedEligible.map(f=>f.reason))],reasonCode,reason};
+  };
   const shortages=[];
   bundle.template.days.forEach(d=>d.meals.forEach(m=>[...m.required,...m.optional].forEach(slot=>{
-    if (!accepted.some(f=>f.slot===slot&&supportsMeal(f,m.id))) shortages.push({day:d.day,meal:m.name,slot,required:m.required.includes(slot)});
+    if (!accepted.some(f=>f.slot===slot&&supportsMeal(f,m.id))) shortages.push({day:d.day,meal:m.name,mealId:m.id,slot,required:m.required.includes(slot),...shortageDetails(slot,m.id)});
   })));
   return {foods:accepted,excluded,shortages};
+}
+export function shortageMessage(shortages,{requiredOnly=false,maxItems=8}={}) {
+  const list=shortages.filter(s=>!requiredOnly||s.required);
+  if(!list.length)return '';
+  const groups=[];
+  list.forEach(item=>{
+    const key=`${item.mealId||item.meal}|${item.slot}|${item.required}|${item.reasonCode}|${item.reason}`;
+    const group=groups.find(g=>g.key===key);
+    if(group)group.days.push(item.day);else groups.push({key,days:[item.day],item});
+  });
+  const dayLabel=days=>{
+    const unique=[...new Set(days)].sort((a,b)=>a-b);
+    if(unique.length===1)return `第${unique[0]}天`;
+    const consecutive=unique.every((day,i)=>i===0||day===unique[i-1]+1);
+    return consecutive?`第${unique[0]}–${unique.at(-1)}天`:`第${unique.join('、')}天`;
+  };
+  const lines=groups.slice(0,maxItems).map(({days,item})=>`${dayLabel(days)}${item.meal} / ${SLOT_NAMES[item.slot]}${item.required?'（必选）':'（可选）'}：${item.reason}`);
+  const rest=groups.length-lines.length;
+  return `${requiredOnly?'发现必选候选缺口':'发现候选缺口'}（${groups.length}类，影响${list.length}处）：${lines.join('；')}${rest>0?`；另有${rest}类缺口未展开`:''}`;
 }
 export function matchRelease(releases,user) {
   return releases.filter(r=>r.template.goal===user.goal && r.template.match.mealCount===user.mealCount && r.template.match.habit===user.habit && user.training>=r.template.match.trainingMin)

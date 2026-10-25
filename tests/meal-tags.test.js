@@ -47,6 +47,39 @@ test('optional slots with no meal-eligible food are skipped without borrowing fr
   assert.deepEqual(plan.days[0].meals[0].items.map(i=>i.slot),['staple']);
 });
 
+test('required slots relax only meal tags and never restore filtered foods',async()=>{
+  const p={...DEFAULT_PROFILE,days:1,mealCount:2};
+  const t={meals:[{id:'breakfast',name:'早餐',share:.5,required:['protein'],optional:['fruit']},{id:'lunch',name:'午餐',share:.5,required:['protein'],optional:['fruit']}]};
+  const safe={id:'safe-protein',name:'安全正餐蛋白',slot:'protein',preference:'best',mealTags:['午餐'],ingredients:['鸡肉'],allergens:[],tags:[],tagsConfirmed:true,tagsReviewed:true,nutritionPer100g:{calories:120,protein:20,fat:3,carbs:2},portions:[{grams:100,label:'100克'}]};
+  const optional={...safe,id:'lunch-fruit',name:'正餐水果',slot:'fruit',mealTags:['午餐']};
+  const plan=compose(p,t,[safe,optional],DEFAULT_RULES);
+  assert.equal(plan.status,'ready');
+  assert.equal(plan.days[0].meals[0].items.length,1);
+  assert.equal(plan.days[0].meals[0].items[0].foodId,'safe-protein');
+  assert.equal(plan.days[0].meals[0].items[0].mealTagRelaxed,true);
+  validatePlan(plan,p,t,[safe,optional]);
+
+  const b=sampleBundle();
+  b.foods=b.foods.map(f=>f.slot==='protein'?{...f,tags:[...new Set([...f.tags,'milk'])]}:f);
+  const excludedProteinIds=new Set(b.foods.filter(f=>f.slot==='protein').map(f=>f.id));
+  const filtered=filterPool(b,{habit:'regular',blockedTags:['milk'],avoids:''});
+  const incomplete=compose(p,t,filtered.foods,DEFAULT_RULES);
+  assert.equal(incomplete.status,'incomplete');
+  assert.equal(incomplete.days[0].meals[0].items[0].unresolved,true);
+  assert.ok(!incomplete.days.flatMap(d=>d.meals).flatMap(m=>m.items).some(i=>excludedProteinIds.has(i.foodId)));
+  await assert.rejects(()=>solvePlan(p,t,filtered.foods,incomplete,DEFAULT_RULES),/没有安全候选/);
+});
+
+test('manual meal-tag relaxation is rejected while a compatible candidate exists',()=>{
+  const p={...DEFAULT_PROFILE,days:1,mealCount:2};
+  const t={meals:[{id:'breakfast',name:'早餐',share:.5,required:['protein'],optional:[]},{id:'lunch',name:'午餐',share:.5,required:['protein'],optional:[]}]};
+  const base={slot:'protein',preference:'best',ingredients:['测试'],allergens:[],tags:[],nutritionPer100g:{calories:100,protein:10,fat:4,carbs:6},portions:[{grams:100,label:'100克'}]};
+  const foods=[{...base,id:'breakfast',name:'早餐食物',mealTags:['早餐']},{...base,id:'lunch',name:'午餐食物',mealTags:['午餐']}];
+  const plan=compose(p,t,foods,DEFAULT_RULES);
+  plan.days[0].meals[0].items[0]={...plan.days[0].meals[0].items[0],foodId:'lunch',name:'午餐食物',mealTagRelaxed:true};
+  assert.throws(()=>validatePlan(plan,p,t,foods),/引用或槽位/);
+});
+
 test('joint solving cannot use feasible breakfast-only replacements at lunch or dinner',async()=>{
   const p={...DEFAULT_PROFILE,days:1,mealCount:2,calories:1000};
   const t={meals:['lunch','dinner'].map(id=>({id,name:id,share:.5,required:['protein'],optional:[]}))};

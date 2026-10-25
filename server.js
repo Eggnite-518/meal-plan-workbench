@@ -51,6 +51,9 @@ async function completion(config, prompt, isTest, signal) {
   const maxTokens = Number(config.maxTokens || 8192);
   if (!Number.isInteger(maxTokens) || maxTokens < 512 || maxTokens > 65536)
     throw new Error("最大输出 Token 需要在 512–65536 之间");
+  const thinking = /^https:\/\/(mediocre-new-api|new-api)\.midway\.run\/?/.test(config.baseUrl)
+    ? {}
+    : thinkingParameters(config.thinkingMode);
   const body = {
     model: settings.model,
     messages: [
@@ -63,7 +66,7 @@ async function completion(config, prompt, isTest, signal) {
       { role: "user", content: prompt },
     ],
     max_tokens: isTest ? 128 : maxTokens,
-    ...thinkingParameters(config.thinkingMode),
+    ...thinking,
   };
   if (config.jsonMode && !isTest)
     body.response_format = { type: "json_object" };

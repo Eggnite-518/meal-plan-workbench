@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {compose,validatePlan,solvePlan,getMeals,getSlots,SLOT_NAMES} from '../src/engine.js';
-import {sampleBundle,profileFor,rulesFor,filterPool,validatePool,normalizeCandidates,validateBundleTemplate,fingerprint,approveBundle,matchRelease,clone,candidatePrompt,matchingRows,confirmLibraryMatches,mergeFoodSupplements,enrichmentPrompt} from '../src/workbench-model.js';
+import {sampleBundle,profileFor,rulesFor,filterPool,shortageMessage,validatePool,normalizeCandidates,validateBundleTemplate,fingerprint,approveBundle,matchRelease,clone,candidatePrompt,matchingRows,confirmLibraryMatches,mergeFoodSupplements,enrichmentPrompt} from '../src/workbench-model.js';
 
 const user={goal:'fatLoss',mealCount:3,habit:'regular',training:2,calories:1650,blockedTags:[],avoids:''};
 const record={id:'db_rice',name:'米饭',unit:'gram',weight:200,calorie:232,nutrition:{protein:5.2,fat:.6,carbohydrate:51.2},showUnits:[]};
@@ -50,7 +50,10 @@ test('food meal tags are required and determine shortages and plan validation',(
   const filtered=filterPool(b,{habit:'regular',blockedTags:[],avoids:''});
   assert.ok(filtered.shortages.some(s=>s.meal==='午餐'&&s.required));
   const p=profileFor(b.template,user),rules=rulesFor(b.template);
-  assert.throws(()=>compose(p,b.template,filtered.foods,rules),/没有适用候选/);
+  const plan=compose(p,b.template,filtered.foods,rules);
+  assert.equal(plan.status,'ready');
+  assert.ok(plan.days.flatMap(d=>d.meals).filter(m=>m.id!=='breakfast').flatMap(m=>m.items).some(i=>i.mealTagRelaxed));
+  validatePlan(plan,p,b.template,filtered.foods);
 });
 test('seven-day template slots survive compose and retries without food meal restrictions',async()=>{
   const b=sampleBundle();validatePool(b,true);
@@ -95,11 +98,25 @@ test('tag filtering handles food exclusions, unknown tags and shortages',()=>{
   assert.ok(result.excluded.some(f=>f.id==='milk'));
   assert.ok(result.foods.every(f=>!f.tags.includes('wheat')&&!f.tags.includes('milk')));
   b.foods.find(f=>f.id==='rice').tagsReviewed=false;
-  assert.ok(filterPool(b,{...user,blockedTags:['milk']}).excluded.some(f=>f.id==='rice'));
+  b.foods.find(f=>f.id==='rice').tagsConfirmed=true;
+  assert.ok(!filterPool(b,{...user,blockedTags:['milk']}).excluded.some(f=>f.id==='rice'));
   const denied=filterPool(b,{...user,avoids:b.foods.map(f=>f.name).join(',')});
   assert.ok(denied.shortages.some(s=>s.required));
   const noFruit=filterPool(sampleBundle(),{...user,avoids:'苹果,橙子,草莓,香蕉'});
   assert.ok(noFruit.shortages.some(s=>s.slot==='fruit'&&s.required));
+});
+test('shortages explain whether meal tags or user filters caused the gap',()=>{
+  const noMealTag=sampleBundle();
+  noMealTag.foods=noMealTag.foods.map(f=>f.slot==='staple'?{...f,mealTags:['午餐','晚餐']}:f);
+  const mealGap=filterPool(noMealTag,{...user,blockedTags:[],avoids:''}).shortages.find(s=>s.meal==='早餐'&&s.slot==='staple');
+  assert.equal(mealGap.reasonCode,'no_meal_tags');
+  assert.match(shortageMessage([mealGap]),/第1天早餐 \/ 主食/);
+  assert.match(shortageMessage([mealGap]),/没有食物带“早餐”餐次标签/);
+  const base=sampleBundle();
+  const allDenied=filterPool(base,{...user,blockedTags:[],avoids:base.foods.filter(f=>f.slot==='staple').map(f=>f.name).join(',')});
+  const preferenceGap=allDenied.shortages.find(s=>s.slot==='staple'&&s.required);
+  assert.equal(preferenceGap.reasonCode,'filtered_by_preferences');
+  assert.match(shortageMessage([preferenceGap]),/全部被当前忌口或饮食条件排除/);
 });
 test('candidate contract rejects counts, duplicate foods and pool mismatch',()=>{
   const b=sampleBundle();

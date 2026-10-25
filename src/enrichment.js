@@ -1,22 +1,23 @@
-import {clone,confirmLibraryMatches,mergeFoodSupplements} from './workbench-model.js';
+import {clone,confirmLibraryMatches,mergeFoodSupplements,isTagDataConfirmed} from './workbench-model.js';
 import {validMealTags} from './food-tags.js';
 
 const key=f=>`${f.slot}|${f.name}`;
 export const needsNutrition=f=>!['calories','protein','fat','carbs'].every(field=>Number.isFinite(f.nutritionPer100g?.[field]));
-export const needsTags=f=>f.tagsComplete===false||(!f.ingredients?.length&&f.tagSchemaVersion!==2)||!Array.isArray(f.tags)||!Array.isArray(f.allergens)||!validMealTags(f.mealTags);
+export const needsIngredients=f=>!f.ingredients?.length&&f.tagSchemaVersion!==2;
+export const needsTags=f=>!isTagDataConfirmed(f);
 export const needsPortions=f=>!f.portions?.length;
 export const missingFoodFields=f=>[
   ...(needsNutrition(f)?['营养数据']:[]),
-  ...(!f.ingredients?.length&&f.tagSchemaVersion!==2?['配料']:[]),
+  ...(needsIngredients(f)?['配料']:[]),
   ...(!validMealTags(f.mealTags)?['餐次标签']:[]),
   ...(needsPortions(f)?['可执行份量']:[]),
-  ...(!Array.isArray(f.tags)||f.tagsComplete===false?['标签']:[]),
+  ...(needsTags(f)?['标签']:[]),
   ...(!Array.isArray(f.allergens)?['过敏原字段']:[]),
 ];
 export const enrichmentQueue=(foods,scope='nutrition')=>foods.filter(f=>scope==='nutrition'?needsNutrition(f):scope==='tags'?needsTags(f):scope==='portions'?needsPortions(f):!needsNutrition(f)&&needsEnrichment(f));
 export const needsEnrichment=f=>
   !['calories','protein','fat','carbs'].every(field=>Number.isFinite(f.nutritionPer100g?.[field]))||
-  needsTags(f)||needsPortions(f);
+  needsTags(f)||needsIngredients(f)||needsPortions(f);
 
 export const autoConfirmFoods=foods=>foods.map(f=>({...f,tagsReviewed:!needsEnrichment(f)}));
 
@@ -32,7 +33,7 @@ export function mergeLibraryFoods(current,rows) {
       ingredients:f.ingredients.length?f.ingredients:old.ingredients,
       allergens:f.ingredients.length?f.allergens:old.allergens,
       portions:f.portions.length?f.portions:old.portions,
-      tags:old.tags,tagsComplete:old.tagsComplete,mealTags:old.mealTags,allergenTags:old.allergenTags,avoidanceTags:old.avoidanceTags,tagSchemaVersion:old.tagSchemaVersion,supplementSource:old.supplementSource,
+      tags:old.tags,tagsComplete:old.tagsComplete,tagsConfirmed:same?old.tagsConfirmed:false,mealTags:old.mealTags,allergenTags:old.allergenTags,avoidanceTags:old.avoidanceTags,tagSchemaVersion:old.tagSchemaVersion,supplementSource:old.supplementSource,
       tagsReviewed:same?old.tagsReviewed:false,
     };
   }))};
@@ -49,7 +50,7 @@ export function mergeEnrichmentBatch(current,snapshot,payload,scope='all') {
     const nutrition=['all','nutrition'].includes(scope)&&f.dataSource==='pending'&&unchanged('nutritionPer100g')&&enriched.nutritionPer100g?{
       nutritionPer100g:enriched.nutritionPer100g,nutritionReference:enriched.nutritionReference,dataSource:enriched.dataSource,
     }:{};
-    const fields=scope==='tags'?['allergens','tags','tagsComplete','mealTags','allergenTags','avoidanceTags','tagSchemaVersion']:scope==='portions'?['portions']:scope==='nutrition'?[]:['ingredients','allergens','portions','tags','tagsComplete','mealTags'];
+    const fields=scope==='tags'?['allergens','tags','tagsComplete','tagsConfirmed','mealTags','allergenTags','avoidanceTags','tagSchemaVersion']:scope==='portions'?['portions']:scope==='nutrition'?[]:['ingredients','allergens','portions','tags','tagsComplete','tagsConfirmed','mealTags'];
     const metadata=Object.fromEntries(fields.filter(field=>unchanged(field)&&enriched[field]!==undefined).map(field=>[field,clone(enriched[field])]));
     return {...f,...nutrition,...metadata,supplementSource:'ai_supplement',tagsReviewed:false};
   }));

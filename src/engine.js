@@ -373,11 +373,18 @@ export function compose(p, t, foods, rules, replacementMode='best') {
       name: m.name,
       share: m.share,
       items: [...m.required, ...m.optional].map((slot) => {
-        const eligible = foods.filter((f) => f.slot === slot&&supportsMeal(f,m.id));
+        const mealEligible = foods.filter((f) => f.slot === slot&&supportsMeal(f,m.id));
+        const slotEligible = foods.filter((f) => f.slot === slot);
+        if (!mealEligible.length && m.optional.includes(slot)) return null;
+        if (!mealEligible.length && !slotEligible.length) {
+          warnings.push(`第${d+1}天${m.name}：必选${SLOT_NAMES[slot]}在安全过滤后无候选，需人工补充`);
+          return {foodId:null,name:'无安全候选，需人工补充',slot,preference:'unresolved',optional:false,unresolved:true};
+        }
+        const mealTagRelaxed=!mealEligible.length;
+        const eligible = mealTagRelaxed ? slotEligible : mealEligible;
         const best=eligible.filter(f=>f.preference!=='secondary'),secondary=eligible.filter(f=>f.preference==='secondary');
         const pool=replacementMode==='secondary'&&secondary.length?secondary:replacementMode==='mixed'?eligible:best.length?best:secondary;
-        if (!pool.length && m.optional.includes(slot)) return null;
-        if (!pool.length) throw new Error(`第${d + 1}天${m.name}的${SLOT_NAMES[slot]}没有适用候选`);
+        if(mealTagRelaxed)warnings.push(`第${d+1}天${m.name}：必选${SLOT_NAMES[slot]}无当前餐次候选，已在保留过敏原、忌口和饮食条件的前提下放宽餐次标签`);
         const available = pool.filter(
           (f) => (usage[f.id] || 0) < rules.maxRepeat,
         );
@@ -397,11 +404,13 @@ export function compose(p, t, foods, rules, replacementMode='best') {
           slot,
           preference:food.preference||'best',
           optional: m.optional.includes(slot),
+          mealTagRelaxed,
         };
       }).filter(Boolean),
     })),
   }));
-  return { days, warnings: [...new Set(warnings)], seed: rules.seed };
+  const unresolved=days.flatMap(day=>day.meals.flatMap(meal=>meal.items.filter(item=>item.unresolved).map(item=>({day:day.day,meal:meal.name,slot:item.slot}))));
+  return { days, warnings: [...new Set(warnings)], seed: rules.seed,status:unresolved.length?'incomplete':'ready',unresolved };
 }
 export function validatePlan(plan, p, t, foods) {
   if (!plan || !Array.isArray(plan.days) || plan.days.length !== p.days)
@@ -427,11 +436,17 @@ export function validatePlan(plan, p, t, foods) {
       mealIds.add(m.id);
       const present = new Set();
       for (const i of m.items) {
+        if(i.unresolved===true){
+          if(i.foodId!==null||i.optional||!mt.required.includes(i.slot)||present.has(i.slot))throw new Error(`第${d.day}天${m.name}未解决槽位格式无效`);
+          present.add(i.slot);continue;
+        }
         const f = foodMap.get(i.foodId);
+        const taggedCandidates=foods.some(food=>food.slot===i.slot&&supportsMeal(food,m.id));
+        const mealAllowed=supportsMeal(f||{},m.id)||(i.mealTagRelaxed===true&&!taggedCandidates);
         if (
           !f ||
           f.slot !== i.slot ||
-          !supportsMeal(f,m.id) ||
+          !mealAllowed ||
           ![...mt.required, ...mt.optional].includes(i.slot) ||
           present.has(i.slot)
         )
@@ -578,7 +593,7 @@ export function solveDay(day, p, t, foods, rules, timeout = 650, searchMode='cur
     m.items.forEach((i, ii) => {
       const key = `pick${mi}_${ii}`;
       model.constraints[key] = { equal: 1 };
-      const eligible=foods.filter(f=>f.slot===i.slot&&supportsMeal(f,m.id)),best=eligible.filter(f=>f.preference!=='secondary');
+      const eligible=foods.filter(f=>f.slot===i.slot&&(i.mealTagRelaxed===true||supportsMeal(f,m.id))),best=eligible.filter(f=>f.preference!=='secondary');
       const source=searchMode==='best'&&best.length?best:eligible;
       const expectedCalories=target*mt.share/Math.max(1,m.items.length);
       const pool=searchMode==='current'?eligible.filter(f=>f.id===i.foodId):localRepairPool(source,i.foodId,expectedCalories,searchMode==='best'?5:7);
@@ -649,6 +664,7 @@ export function solveDay(day, p, t, foods, rules, timeout = 650, searchMode='cur
           name: c.food.name,
           slot: c.food.slot,
           preference:c.food.preference||'best',
+          mealTagRelaxed:day.meals[c.mi].items[c.ii].mealTagRelaxed===true,
           grams: c.portion.grams,
           portion: c.portion.label,
           ...c.nutrition,
@@ -682,7 +698,7 @@ export function solveDay(day, p, t, foods, rules, timeout = 650, searchMode='cur
 export function closestCalorieDay(day,p,t,foods,rules,beamSize=4000){
   const target=getTargets(p).calories,started=performance.now(),groups=[];
   day.meals.forEach((m,mi)=>m.items.forEach((item,ii)=>{
-    const eligible=foods.filter(f=>f.slot===item.slot&&supportsMeal(f,m.id));
+    const eligible=foods.filter(f=>f.slot===item.slot&&(item.mealTagRelaxed===true||supportsMeal(f,m.id)));
     const options=eligible.flatMap(food=>food.portions.map(portion=>({food,portion,nutrition:nutrition(food,portion)})));
     if(item.optional)options.unshift({food:null,portion:{grams:0,label:'不加入'},nutrition:{calories:0,protein:0,fat:0,carbs:0}});
     if(!options.length)throw new Error(`第${day.day}天${m.name}的${SLOT_NAMES[item.slot]}没有可执行份量`);
@@ -706,7 +722,7 @@ export function closestCalorieDay(day,p,t,foods,rules,beamSize=4000){
   const chosen=states.sort((a,b)=>Math.abs(a.calories-target)-Math.abs(b.calories-target))[0];
   if(!chosen)return {day:day.day,pass:false,meals:[],searchStatus:'infeasible',reason:'当前候选和必选结构无法满足每餐最多4种食物',durationMs:Math.round(performance.now()-started)};
   const result={day:day.day,meals:day.meals.map(m=>({id:m.id,name:m.name,share:getMeals(t,day.day).find(mt=>mt.id===m.id).share,items:[]}))};
-  groups.forEach((group,index)=>{const choice=chosen.picks[index];if(!choice.food)return;result.meals[group.mi].items.push({foodId:choice.food.id,name:choice.food.name,slot:choice.food.slot,preference:choice.food.preference||'best',grams:choice.portion.grams,portion:choice.portion.label,...choice.nutrition});});
+  groups.forEach((group,index)=>{const choice=chosen.picks[index];if(!choice.food)return;result.meals[group.mi].items.push({foodId:choice.food.id,name:choice.food.name,slot:choice.food.slot,preference:choice.food.preference||'best',mealTagRelaxed:group.item.mealTagRelaxed===true,grams:choice.portion.grams,portion:choice.portion.label,...choice.nutrition});});
   const report=checkDay(result,p,t,rules);
   return {...result,...report,approximate:!report.pass,durationMs:Math.round(performance.now()-started),searchStatus:report.pass?'feasible':'approximate',reason:report.pass?undefined:'整数规划在15秒内未返回完整结果，已通过快速离散份量搜索返回每日总热量最接近目标的方案，并以热量绝对偏差最小为第一优先级；请查看未通过项。'};
 }
@@ -809,6 +825,7 @@ export function summarizeSolvedPlan(p,foods,rules,solved,durationMs=0) {
 
 export async function solvePlan(p,t,foods,plan,rules,onProgress=()=>{}) {
   const planStarted=performance.now();
+  if(plan?.days?.some(day=>day.meals?.some(meal=>meal.items?.some(item=>item.unresolved))))throw new Error('计划仍有必选槽位没有安全候选，不能计算为可执行方案');
   validatePlan(plan,p,t,foods);
   validateRules(rules);
   const solved=[];

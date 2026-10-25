@@ -31,7 +31,7 @@ export function parseTaggingResult(snapshot,input){
         const f=expected[index];
         if(!value||Object.keys(value).sort().join('|')!==['foodName','allergenTags','avoidanceTags','mealTags'].sort().join('|')||value.foodName!==f.name||seen.has(f.id))throw new Error('标签结果名称、顺序或字段不一致');
         validate(value.allergenTags,ALLERGEN_TAGS,'过敏原标签');validate(value.avoidanceTags,AVOIDANCE_TAGS,'忌口标签');validate(value.mealTags,Object.values(MEAL_TAGS),'餐次标签',true);
-        seen.add(f.id);patches.push({...f,allergenTags:value.allergenTags,avoidanceTags:value.avoidanceTags,mealTags:value.mealTags,tags:[...value.allergenTags,...value.avoidanceTags].map(tag=>tagKeys[tag]),allergens:[...value.allergenTags],tagsComplete:true,tagSchemaVersion:2,supplementSource:'ai_supplement'});
+        seen.add(f.id);patches.push({...f,allergenTags:value.allergenTags,avoidanceTags:value.avoidanceTags,mealTags:value.mealTags,tags:[...value.allergenTags,...value.avoidanceTags].map(tag=>tagKeys[tag]),allergens:[...value.allergenTags],tagsComplete:true,tagsConfirmed:true,tagSchemaVersion:2,supplementSource:'ai_supplement'});
       });
     }
   }
