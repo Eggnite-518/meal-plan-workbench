@@ -1,0 +1,55 @@
+import {chromium} from '@playwright/test';
+import assert from 'node:assert/strict';
+import {defaultTemplate} from '../src/workbench-model.js';
+import {getSlots} from '../src/engine.js';
+const browser=await chromium.launch({headless:true});
+const page=await browser.newPage({viewport:{width:1440,height:1000}});
+const errors=[];page.on('pageerror',e=>errors.push(e.message));
+const candidates={slotFoods:getSlots(defaultTemplate()).map(slot=>({slot,foods:[`${slot}候选`]}))};
+try{
+  await page.goto(process.env.WORKBENCH_URL||'http://127.0.0.1:4174');
+  await page.getByRole('tab',{name:'候选食物'}).click();
+  await page.getByLabel('候选食物JSON',{exact:true}).fill(JSON.stringify(candidates));
+  await page.getByRole('button',{name:'应用候选列表'}).click();
+  await page.getByRole('tab',{name:'数据与标签'}).click();
+  assert.ok(await page.getByRole('button',{name:'AI补充缺失信息与标签'}).isDisabled());
+  await page.route('**/api/food-search',route=>{
+    const {query}=route.request().postDataJSON();
+    const empty=query==='protein候选';
+    route.fulfill({json:{foods:empty?[]:[{id:`db_${query}`,name:query,unit:'gram',weight:200,calorie:232,nutrition:{protein:5.2,fat:.6,carbohydrate:51.2},showUnits:[]}],page:1,total:empty?0:1}});
+  });
+  await page.getByLabel('批量匹配Cookie').fill('fake-cookie-for-test');
+  await page.getByRole('button',{name:'批量查询食物库'}).click();
+  await page.getByText('食物库查询完成，请检查候选记录并确认匹配',{exact:true}).waitFor();
+  assert.equal(await page.locator('.library-match-table tbody tr').count(),5);
+  await page.getByRole('button',{name:'确认食物库匹配',exact:true}).click();
+  assert.match(await page.getByTestId('supplement-feedback').innerText(),/已确认4条库记录；1条未匹配/);
+  const stored=await page.evaluate(()=>JSON.parse(localStorage.getItem('otter-meal-lab-v2')));
+  assert.equal(stored.bundle.foods.length,4);
+  await page.getByRole('button',{name:'配置模型',exact:true}).click();
+  await page.getByLabel('API Key',{exact:true}).fill('fake-key');
+  await page.getByRole('button',{name:'完成配置'}).click();
+  const patches=stored.bundle.foods.map(f=>({...f,ingredients:['基础食材'],allergens:[],tags:[],mealTypes:['breakfast','lunch','dinner'],portions:[{grams:150,label:'150克'}],nutritionPer100g:{protein:99,fat:0,carbs:0,calories:999},dataSource:'ai_estimate'}));
+  await page.route('**/api/preprocess',route=>{
+    assert.match(route.request().postDataJSON().prompt,/已确认的食物库记录/);
+    route.fulfill({json:{parsed:{foods:patches},content:JSON.stringify({foods:patches}),durationMs:10,model:'mock',timestamp:new Date().toISOString()}});
+  });
+  await page.getByRole('button',{name:'AI补充缺失信息与标签'}).click();
+  await page.getByText('AI结果已返回，请检查并应用',{exact:true}).waitFor();
+  await page.getByText('查看食物数据 / 粘贴AI补充结果',{exact:true}).click();
+  await page.getByRole('button',{name:'应用补充信息',exact:true}).click();
+  assert.match(await page.getByTestId('supplement-feedback').innerText(),/食物库营养值保持不变/);
+  const final=await page.evaluate(()=>JSON.parse(localStorage.getItem('otter-meal-lab-v2')));
+  assert.equal(final.bundle.foods[0].nutritionPer100g.calories,116);
+  assert.equal(final.bundle.foods[0].dataSource,'real_library');
+  assert.ok(!JSON.stringify(final).includes('fake-cookie-for-test'));
+  await page.screenshot({path:'test-results/library-first-desktop.png',fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  await page.screenshot({path:'test-results/library-first-mobile.png',fullPage:true});
+  await page.reload();await page.getByRole('tab',{name:'数据与标签'}).click();
+  assert.equal(await page.getByLabel('批量匹配Cookie').inputValue(),'');
+  assert.equal(await page.locator('.library-match-table tbody tr').count(),5);
+  assert.deepEqual(errors,[]);
+  console.log('Library-first matching, unmatched rows, AI supplements, immutable nutrition, persistence and mobile layout passed.');
+}finally{await browser.close();}
