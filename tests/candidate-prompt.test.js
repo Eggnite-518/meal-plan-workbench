@@ -4,11 +4,12 @@ import {DEFAULT_CANDIDATE_PROMPT,candidatePromptInput,renderCandidatePrompt} fro
 import {DEFAULT_PLAN_INPUT,DEFAULT_PLAN_PROMPT,renderPlanPrompt} from '../src/plan-prompt.js';
 import {defaultTemplate} from '../src/workbench-model.js';
 
-test('first step sends only the original five fields and never injects region',()=>{
+test('first step sends the six supported fields including calories and never injects region',()=>{
   const text=renderPlanPrompt(DEFAULT_PLAN_PROMPT,{...DEFAULT_PLAN_INPUT,地域范围:'中国大陆'});
   const sent=JSON.parse(text.slice(text.lastIndexOf('\n\n')+2));
   assert.deepEqual(sent,DEFAULT_PLAN_INPUT);
   assert.ok(!text.includes('地域范围'));
+  assert.equal(sent.每日目标摄入热量,1650);
 });
 
 test('second step composes region and first-step output into candidate input',()=>{
@@ -17,18 +18,19 @@ test('second step composes region and first-step output into candidate input',()
   const input=candidatePromptInput(t,'中国大陆',source);
   assert.deepEqual(input,{...source,地域范围:'中国大陆',planName:t.name,planDescription:t.planDescription,slotConstraints:t.slotConstraints});
   const rendered=renderCandidatePrompt(DEFAULT_CANDIDATE_PROMPT,t,'中国大陆',source);
-  const parsed=JSON.parse(rendered);
-  assert.deepEqual(parsed.用户输入,input);
+  const sent=JSON.parse(rendered.slice(rendered.lastIndexOf('\n\n')+2));
+  assert.deepEqual(sent,input);
   assert.match(rendered,/best/);assert.match(rendered,/secondary/);
   assert.match(rendered,/fruit槽位以10至20种/);
 });
 
 test('candidate custom template preserves testContent contract',()=>{
-  const custom=JSON.parse(DEFAULT_CANDIDATE_PROMPT);
+  const custom=JSON.parse(DEFAULT_CANDIDATE_PROMPT.split(/\n\s*用户输入：\s*\n/)[0]);
   custom.Rules.push('优先使用超市常见食物');
-  const rendered=JSON.parse(renderCandidatePrompt(JSON.stringify(custom),defaultTemplate(),'全球通用',DEFAULT_PLAN_INPUT));
-  assert.ok(rendered.Rules.includes('优先使用超市常见食物'));
-  assert.equal(rendered.用户输入.地域范围,'全球通用');
+  const template=`${JSON.stringify(custom)}\n\n用户输入：\n\n\${testContent}`;
+  const rendered=renderCandidatePrompt(template,defaultTemplate(),'全球通用',DEFAULT_PLAN_INPUT);
+  assert.ok(rendered.includes('优先使用超市常见食物'));
+  assert.equal(JSON.parse(rendered.slice(rendered.lastIndexOf('\n\n')+2)).地域范围,'全球通用');
 });
 
 test('invalid prompt templates and plan inputs fail before model request',()=>{
@@ -36,4 +38,7 @@ test('invalid prompt templates and plan inputs fail before model request',()=>{
   assert.throws(()=>renderCandidatePrompt('{"x":"${testContent}"',defaultTemplate()),SyntaxError);
   assert.throws(()=>renderPlanPrompt('{}',DEFAULT_PLAN_INPUT),/testContent/);
   assert.throws(()=>renderPlanPrompt(DEFAULT_PLAN_PROMPT,{...DEFAULT_PLAN_INPUT,计划天数:5}),/7天/);
+  assert.throws(()=>renderPlanPrompt(DEFAULT_PLAN_PROMPT,{...DEFAULT_PLAN_INPUT,每日目标摄入热量:600}),/800/);
+  const {每日目标摄入热量,...missingCalories}=DEFAULT_PLAN_INPUT;
+  assert.throws(()=>renderPlanPrompt(DEFAULT_PLAN_PROMPT,missingCalories),/必要字段/);
 });

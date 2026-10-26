@@ -4,7 +4,7 @@ import {Utensils,LayoutTemplate,Sparkles,Database,FlaskConical,ShieldCheck,UserR
 import {SLOT_NAMES,GOALS,getSlots,compose,totals,validatePlan,validateRules,summarizeSolvedPlan,mealServingSummary} from './engine.js';
 import {STORAGE_KEY,ALL_TAGS,SOURCE_NAMES,MEAL_NAMES,blankBundle,sampleBundle,clone,validateBundleTemplate,parsePlanTemplates,normalizeCandidates,candidateGroups,candidateInput,syncFoodPreferences,enrichmentPrompt,validatePool,profileFor,rulesFor,filterPool,shortageMessage,matchRelease,fingerprint,approveBundle,matchingRows,mergeFoodSupplements,migrateSavedWorkbench,applyCurrentStructure} from './workbench-model.js';
 import {matchExactRow} from './real-library.js';
-import {DEFAULT_CANDIDATE_PROMPT,renderCandidatePrompt,candidatePromptInput} from './candidate-prompt.js';
+import {CANDIDATE_PROMPT_VERSION,DEFAULT_CANDIDATE_PROMPT,renderCandidatePrompt,candidatePromptInput} from './candidate-prompt.js';
 import {DEFAULT_PLAN_INPUT,DEFAULT_PLAN_PROMPT,renderPlanPrompt} from './plan-prompt.js';
 import {publicConfig,readCredentials,saveCredentials,compactMatches,restoreMatches,cacheLibraryMatches,applyLibraryCache} from './workbench-storage.js';
 import {hasLibraryMatch,queryIndices,runLibraryQueries,fastBestIndices,secondaryFallbackIndices,libraryProgressText,libraryResultSummary} from './library-query.js';
@@ -93,7 +93,7 @@ function App(){
   const [releases,setReleases]=useState(saved?.releases||[]);
   const [phase,setPhase]=useState(saved?.phase==='live'?'live':'prep'),[step,setStep]=useState(Number.isInteger(saved?.step)&&saved.step>=0&&saved.step<(saved?.phase==='live'?4:5)?saved.step:0);
   const [templateText,setTemplateText]=useState(json(bundle.template));
-  const [planInput,setPlanInput]=useState(saved?.planInput||DEFAULT_PLAN_INPUT);
+  const [planInput,setPlanInput]=useState({...DEFAULT_PLAN_INPUT,...saved?.planInput});
   const [foodRegion,setFoodRegion]=useState(saved?.foodRegion||'中国大陆');
   const [planImportText,setPlanImportText]=useState(saved?.planImportText||'');
   const [importedPlans,setImportedPlans]=useState(saved?.importedPlans||[]);
@@ -102,9 +102,10 @@ function App(){
   const [candidateApplyState,setCandidateApplyState]=useState(null);
   const [foodText,setFoodText]=useState(json({foods:bundle.foods}));
   const [count,setCount]=useState(saved?.candidateCount??15);
-  const savedCandidatePrompt=saved?.candidatePromptTemplate?.includes('${testContent}')?saved.candidatePromptTemplate:DEFAULT_CANDIDATE_PROMPT;
+  const currentCandidatePromptVersion=saved?.candidatePromptVersion===CANDIDATE_PROMPT_VERSION;
+  const savedCandidatePrompt=currentCandidatePromptVersion&&saved?.candidatePromptTemplate?.includes('${testContent}')?saved.candidatePromptTemplate:DEFAULT_CANDIDATE_PROMPT;
   const [candidatePromptTemplate,setCandidatePromptTemplate]=useState(savedCandidatePrompt);
-  const [candidatePromptDraft,setCandidatePromptDraft]=useState(saved?.candidatePromptDraft?.includes('${testContent}')?saved.candidatePromptDraft:savedCandidatePrompt);
+  const [candidatePromptDraft,setCandidatePromptDraft]=useState(currentCandidatePromptVersion&&saved?.candidatePromptDraft?.includes('${testContent}')?saved.candidatePromptDraft:savedCandidatePrompt);
   const [enrichPrompt,setEnrichPrompt]=useState('');
   const [scopedPrompts,setScopedPrompts]=useState({});
   const [records,setRecords]=useState([]),[test,setTest]=useState(saved?.test||null);
@@ -136,7 +137,7 @@ function App(){
   const [testHistory,setTestHistory]=useState([]);
   const worker=useRef([]),controller=useRef(null),timer=useRef(null),importRef=useRef(null),loadedRecord=useRef(null);
   const bundleRef=useRef(bundle),libraryController=useRef(null),enrichController=useRef(null);
-  useEffect(()=>{try{localStorage.setItem(STORAGE_KEY,json({bundle,releases,test,testSelection,testAlternatives,libraryRows:compactMatches(libraryRows),libraryCache,candidateCount:count,candidatePromptTemplate,candidatePromptDraft,planImportText,importedPlans,planInput,foodRegion,phase,step,modelConfig:publicConfig(config),mealPlanModelConfig:publicConfig(mealPlanConfig),enrichProgress,enrichHistory,reviewHistory}));}catch{setError('本地保存失败，可能存储空间不足。请先导出工作台备份，当前修改尚未保存');}},[bundle,releases,test,testSelection,testAlternatives,libraryRows,libraryCache,count,candidatePromptTemplate,candidatePromptDraft,planImportText,importedPlans,planInput,foodRegion,phase,step,config,mealPlanConfig,enrichProgress,enrichHistory,reviewHistory]);
+  useEffect(()=>{try{localStorage.setItem(STORAGE_KEY,json({bundle,releases,test,testSelection,testAlternatives,libraryRows:compactMatches(libraryRows),libraryCache,candidateCount:count,candidatePromptVersion:CANDIDATE_PROMPT_VERSION,candidatePromptTemplate,candidatePromptDraft,planImportText,importedPlans,planInput,foodRegion,phase,step,modelConfig:publicConfig(config),mealPlanModelConfig:publicConfig(mealPlanConfig),enrichProgress,enrichHistory,reviewHistory}));}catch{setError('本地保存失败，可能存储空间不足。请先导出工作台备份，当前修改尚未保存');}},[bundle,releases,test,testSelection,testAlternatives,libraryRows,libraryCache,count,candidatePromptTemplate,candidatePromptDraft,planImportText,importedPlans,planInput,foodRegion,phase,step,config,mealPlanConfig,enrichProgress,enrichHistory,reviewHistory]);
   useEffect(()=>{if(enrichProgress?.scope)setEnrichHistory(h=>({...h,[enrichProgress.scope]:enrichProgress}));},[enrichProgress]);
   useEffect(()=>{try{saveCredentials(localStorage,{apiKey:config.apiKey,mealPlanApiKey:mealPlanConfig.apiKey,cookie,rememberApi,rememberMealPlanApi,rememberCookie});}catch{setError('凭证保存失败，请检查浏览器存储空间或隐私设置');}},[config.apiKey,mealPlanConfig.apiKey,cookie,rememberApi,rememberMealPlanApi,rememberCookie]);
   useEffect(()=>{setLibraryRows(rows=>applyLibraryCache(restoreMatches(matchingRows(bundle.candidates,rows),bundle.foods),libraryCache).rows);setSupplementFeedback(null);setEnrichPrompt('');setScopedPrompts({});},[bundle.candidates]);
@@ -493,13 +494,14 @@ function App(){
         <div className="content-heading"><div><span className="step-label">{phase==='prep'?'预处理':'实时生成'} / {String(step+1).padStart(2,'0')}</span><h2>{titles[step][0]}</h2></div>{phase==='prep'&&<Tag>{bundle.template.name}</Tag>}</div>
 
         {phase==='prep'&&step===0&&<>
-          <div className="section-line"><strong>用户选择</strong><Tag tone="green">第一步仅传以下5个字段</Tag></div>
+          <div className="section-line"><strong>用户选择</strong><Tag tone="green">第一步仅传以下6个字段</Tag></div>
           <div className="form-grid three">
             <Field label="目的"><select value={planInput.目的} onChange={e=>setPlanInput({...planInput,目的:e.target.value})}><option>减脂</option><option>增肌</option><option>维持</option></select></Field>
             <Field label="每日餐数"><select value={planInput.每日餐数} onChange={e=>setPlanInput({...planInput,每日餐数:e.target.value})}><option>一天3顿</option><option>一天2顿</option></select></Field>
             <Field label="饮食策略"><select value={planInput.饮食策略} onChange={e=>setPlanInput({...planInput,饮食策略:e.target.value})}><option>日常饮食</option><option>地中海饮食</option><option>素食</option><option>生酮饮食</option><option>低碳饮食</option></select></Field>
             <Field label="计划天数"><input type="number" value={7} readOnly/></Field>
             <Field label="运动习惯"><select value={planInput.运动习惯} onChange={e=>setPlanInput({...planInput,运动习惯:e.target.value})}><option>规律运动</option><option>不怎么运动</option></select></Field>
+            <Field label="每日目标摄入热量 kcal"><input aria-label="模板每日目标摄入热量" type="number" min="800" max="5000" value={planInput.每日目标摄入热量} onChange={e=>setPlanInput({...planInput,每日目标摄入热量:Number(e.target.value)})}/></Field>
           </div>
           <div className="actions"><Button primary icon={Sparkles} disabled={Boolean(busy)} onClick={()=>aiGenerate('plan')}>AI生成计划模板</Button></div>
           <details><summary>第一步实际发送提示词</summary><JsonEditor label="计划模板提示词" value={planPrompt} rows={16}/></details>
@@ -528,7 +530,7 @@ function App(){
           <div className="section-line"><strong>第二步 · AI生成候选食物</strong><Tag tone="green">已自动使用第一步结果</Tag></div>
           <div className="form-grid three"><Field label="地域范围"><select aria-label="地域范围" value={foodRegion} onChange={e=>setFoodRegion(e.target.value)}><option>中国大陆</option><option>北美饮食区</option><option>日本饮食区</option><option>欧洲饮食区</option><option>拉丁美洲饮食区</option><option>东南亚饮食区</option><option>全球通用</option></select></Field><Field label="计划"><input readOnly value={bundle.template.name}/></Field><Field label="槽位数"><input readOnly value={`${getSlots(bundle.template).length} 个槽位`}/></Field></div>
           <details><summary>第二步自动拼装输入</summary><JsonEditor label="候选食物生成输入" value={json(candidatePromptInput(bundle.template,foodRegion,planInput))} rows={12}/></details>
-          <details><summary>候选生成提示词 · {promptDirty?'有未保存修改':'已保存'}</summary><JsonEditor label="候选提示词模板" value={candidatePromptDraft} onChange={setCandidatePromptDraft} rows={18} action={<><Button primary icon={Save} disabled={Boolean(busy)} onClick={saveCandidatePrompt}>保存并应用提示词</Button><Button icon={RotateCcw} disabled={Boolean(busy)} onClick={()=>{setCandidatePromptDraft(candidatePromptTemplate);notify('已恢复为上次保存的提示词');}}>恢复已保存版本</Button><Button icon={RotateCcw} disabled={Boolean(busy)} onClick={()=>{setCandidatePromptTemplate(DEFAULT_CANDIDATE_PROMPT);setCandidatePromptDraft(DEFAULT_CANDIDATE_PROMPT);notify('已恢复并保存默认提示词');}}>恢复默认提示词</Button></>}/><div className="slot-list"><Tag>{'${testContent}'}</Tag></div></details>
+          <details><summary>候选生成提示词 · {promptDirty?'有未保存修改':'已保存'}</summary><JsonEditor label="候选提示词模板" value={candidatePromptDraft} onChange={setCandidatePromptDraft} rows={18} action={<><Button primary icon={Save} disabled={Boolean(busy)} onClick={saveCandidatePrompt}>保存并应用提示词</Button><Button icon={RotateCcw} disabled={Boolean(busy)} onClick={()=>{setCandidatePromptDraft(candidatePromptTemplate);notify('已恢复为上次保存的提示词');}}>恢复已保存版本</Button><Button icon={RotateCcw} disabled={Boolean(busy)} onClick={()=>{setCandidatePromptTemplate(DEFAULT_CANDIDATE_PROMPT);setCandidatePromptDraft(DEFAULT_CANDIDATE_PROMPT);notify('已恢复并保存默认提示词');}}>恢复默认提示词</Button></>}/><div className="slot-list"><Tag>{'${testContent}'}</Tag><Tag tone="blue">v{CANDIDATE_PROMPT_VERSION}</Tag></div></details>
           {promptError&&<div className="alert error" role="alert">{promptError}</div>}
           {promptDirty&&<div className="alert warning" role="status">提示词有未保存修改。保存并应用后再生成。</div>}
           <details><summary>实际发送提示词 · 含地域与第一步结果</summary><JsonEditor label="实际发送提示词" value={prompt} rows={18}/></details>
