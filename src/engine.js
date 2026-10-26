@@ -442,7 +442,7 @@ export function validatePlan(plan, p, t, foods) {
         }
         const f = foodMap.get(i.foodId);
         const taggedCandidates=foods.some(food=>food.slot===i.slot&&supportsMeal(food,m.id));
-        const mealAllowed=supportsMeal(f||{},m.id)||(i.mealTagRelaxed===true&&!taggedCandidates);
+        const mealAllowed=supportsMeal(f||{},m.id)||i.aiSelected===true||(i.mealTagRelaxed===true&&!taggedCandidates);
         if (
           !f ||
           f.slot !== i.slot ||
@@ -593,7 +593,7 @@ export function solveDay(day, p, t, foods, rules, timeout = 650, searchMode='cur
     m.items.forEach((i, ii) => {
       const key = `pick${mi}_${ii}`;
       model.constraints[key] = { equal: 1 };
-      const eligible=foods.filter(f=>f.slot===i.slot&&(i.mealTagRelaxed===true||supportsMeal(f,m.id))),best=eligible.filter(f=>f.preference!=='secondary');
+      const eligible=foods.filter(f=>f.slot===i.slot&&(i.aiSelected===true||i.mealTagRelaxed===true||supportsMeal(f,m.id))),best=eligible.filter(f=>f.preference!=='secondary');
       const source=searchMode==='best'&&best.length?best:eligible;
       const expectedCalories=target*mt.share/Math.max(1,m.items.length);
       const pool=searchMode==='current'?eligible.filter(f=>f.id===i.foodId):localRepairPool(source,i.foodId,expectedCalories,searchMode==='best'?5:7);
@@ -665,6 +665,7 @@ export function solveDay(day, p, t, foods, rules, timeout = 650, searchMode='cur
           slot: c.food.slot,
           preference:c.food.preference||'best',
           mealTagRelaxed:day.meals[c.mi].items[c.ii].mealTagRelaxed===true,
+          aiSelected:day.meals[c.mi].items[c.ii].aiSelected===true,
           grams: c.portion.grams,
           portion: c.portion.label,
           ...c.nutrition,
@@ -698,7 +699,7 @@ export function solveDay(day, p, t, foods, rules, timeout = 650, searchMode='cur
 export function closestCalorieDay(day,p,t,foods,rules,beamSize=4000){
   const target=getTargets(p).calories,started=performance.now(),groups=[];
   day.meals.forEach((m,mi)=>m.items.forEach((item,ii)=>{
-    const eligible=foods.filter(f=>f.slot===item.slot&&(item.mealTagRelaxed===true||supportsMeal(f,m.id)));
+    const eligible=foods.filter(f=>f.slot===item.slot&&(item.aiSelected===true||item.mealTagRelaxed===true||supportsMeal(f,m.id)));
     const options=eligible.flatMap(food=>food.portions.map(portion=>({food,portion,nutrition:nutrition(food,portion)})));
     if(item.optional)options.unshift({food:null,portion:{grams:0,label:'不加入'},nutrition:{calories:0,protein:0,fat:0,carbs:0}});
     if(!options.length)throw new Error(`第${day.day}天${m.name}的${SLOT_NAMES[item.slot]}没有可执行份量`);
@@ -722,7 +723,7 @@ export function closestCalorieDay(day,p,t,foods,rules,beamSize=4000){
   const chosen=states.sort((a,b)=>Math.abs(a.calories-target)-Math.abs(b.calories-target))[0];
   if(!chosen)return {day:day.day,pass:false,meals:[],searchStatus:'infeasible',reason:'当前候选和必选结构无法满足每餐最多4种食物',durationMs:Math.round(performance.now()-started)};
   const result={day:day.day,meals:day.meals.map(m=>({id:m.id,name:m.name,share:getMeals(t,day.day).find(mt=>mt.id===m.id).share,items:[]}))};
-  groups.forEach((group,index)=>{const choice=chosen.picks[index];if(!choice.food)return;result.meals[group.mi].items.push({foodId:choice.food.id,name:choice.food.name,slot:choice.food.slot,preference:choice.food.preference||'best',mealTagRelaxed:group.item.mealTagRelaxed===true,grams:choice.portion.grams,portion:choice.portion.label,...choice.nutrition});});
+  groups.forEach((group,index)=>{const choice=chosen.picks[index];if(!choice.food)return;result.meals[group.mi].items.push({foodId:choice.food.id,name:choice.food.name,slot:choice.food.slot,preference:choice.food.preference||'best',mealTagRelaxed:group.item.mealTagRelaxed===true,aiSelected:group.item.aiSelected===true,grams:choice.portion.grams,portion:choice.portion.label,...choice.nutrition});});
   const report=checkDay(result,p,t,rules);
   return {...result,...report,approximate:!report.pass,durationMs:Math.round(performance.now()-started),searchStatus:report.pass?'feasible':'approximate',reason:report.pass?undefined:'整数规划在15秒内未返回完整结果，已通过快速离散份量搜索返回每日总热量最接近目标的方案，并以热量绝对偏差最小为第一优先级；请查看未通过项。'};
 }

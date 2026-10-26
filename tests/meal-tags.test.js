@@ -80,6 +80,19 @@ test('manual meal-tag relaxation is rejected while a compatible candidate exists
   assert.throws(()=>validatePlan(plan,p,t,foods),/引用或槽位/);
 });
 
+test('AI-selected food may bypass meal tags but not slot or pool validation',()=>{
+  const b=sampleBundle(),p=profileFor(b.template,{calories:1650});
+  const plan=compose(p,b.template,b.foods,rulesFor(b.template));
+  const item=plan.days[0].meals[0].items[0];
+  const food=b.foods.find(candidate=>candidate.id===item.foodId);
+  const foods=b.foods.map(candidate=>candidate.id===food.id?{...candidate,mealTags:['晚餐']}:candidate);
+  for(const day of plan.days)for(const meal of day.meals)for(const selected of meal.items)if(selected.foodId===food.id)selected.aiSelected=true;
+  validatePlan(plan,p,b.template,foods);
+  const wrongSlot=foods.map(candidate=>candidate.id===food.id?{...candidate,slot:candidate.slot==='staple'?'protein':'staple'}:candidate);
+  assert.throws(()=>validatePlan(plan,p,b.template,wrongSlot),/引用或槽位/);
+  assert.throws(()=>validatePlan(plan,p,b.template,foods.filter(candidate=>candidate.id!==food.id)),/引用或槽位/);
+});
+
 test('joint solving cannot use feasible breakfast-only replacements at lunch or dinner',async()=>{
   const p={...DEFAULT_PROFILE,days:1,mealCount:2,calories:1000};
   const t={meals:['lunch','dinner'].map(id=>({id,name:id,share:.5,required:['protein'],optional:[]}))};

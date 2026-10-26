@@ -149,10 +149,10 @@ app.post('/api/preprocess', async (req,res) => {
   res.on('close',()=>{if(!res.writableEnded)controller.abort();});
   try {
     const {config,template,count=15,prompt,stage}=req.body;
-    if (!['plan','candidates','enrichment'].includes(stage)) throw new Error('无效的预处理阶段');
+    if (!['plan','candidates','enrichment','meal-plan'].includes(stage)) throw new Error('无效的预处理阶段');
     if(stage!=='plan')validateBundleTemplate(template);
     if(stage==='enrichment'&&(!Number.isInteger(count) || count<3 || count>20)) throw new Error('候选数量需要为3–20的整数');
-    if (typeof prompt!=='string' || !prompt.trim() || prompt.length>60000) throw new Error('提示词不能为空或超过60000字符');
+    if (typeof prompt!=='string' || !prompt.trim() || prompt.length>(stage==='meal-plan'?200000:60000)) throw new Error(`提示词不能为空或超过${stage==='meal-plan'?200000:60000}字符`);
     const result=await completion(config,prompt,false,controller.signal);
     let parsed=null,validationError='';
     try {

@@ -9,18 +9,21 @@ function memoryStorage() {
 }
 
 test('credentials persist only after opt-in, independently, and clear on opt-out',()=>{
-  const storage=memoryStorage(), values={apiKey:'fake-api-test',cookie:'fake-cookie-test'};
-  saveCredentials(storage,{...values,rememberApi:false,rememberCookie:false});
+  const storage=memoryStorage(), values={apiKey:'fake-api-test',mealPlanApiKey:'fake-meal-plan-test',cookie:'fake-cookie-test'};
+  saveCredentials(storage,{...values,rememberApi:false,rememberMealPlanApi:false,rememberCookie:false});
   assert.equal(storage.getItem(CREDENTIALS_KEY),null);
-  saveCredentials(storage,{...values,rememberApi:false,rememberCookie:true});
+  saveCredentials(storage,{...values,rememberApi:false,rememberMealPlanApi:false,rememberCookie:true});
   assert.equal(readCredentials(storage).cookie,values.cookie);
   assert.equal(readCredentials(storage).apiKey,'');
   assert.ok(!storage.getItem(CREDENTIALS_KEY).includes(values.apiKey));
-  saveCredentials(storage,{...values,rememberApi:true,rememberCookie:true});
+  assert.ok(!storage.getItem(CREDENTIALS_KEY).includes(values.mealPlanApiKey));
+  saveCredentials(storage,{...values,rememberApi:true,rememberMealPlanApi:true,rememberCookie:true});
   assert.equal(readCredentials(storage).apiKey,values.apiKey);
-  saveCredentials(storage,{...values,cookie:'',rememberApi:true,rememberCookie:false});
+  assert.equal(readCredentials(storage).mealPlanApiKey,values.mealPlanApiKey);
+  saveCredentials(storage,{...values,cookie:'',rememberApi:true,rememberMealPlanApi:false,rememberCookie:false});
   assert.equal(readCredentials(storage).cookie,'');
-  saveCredentials(storage,{...values,rememberApi:false,rememberCookie:false});
+  assert.equal(readCredentials(storage).mealPlanApiKey,'');
+  saveCredentials(storage,{...values,rememberApi:false,rememberMealPlanApi:false,rememberCookie:false});
   assert.equal(storage.getItem(CREDENTIALS_KEY),null);
   storage.setItem(CREDENTIALS_KEY,'invalid JSON');
   assert.equal(readCredentials(storage).rememberApi,false);

@@ -11,17 +11,19 @@ export function readCredentials(storage) {
     const value = JSON.parse(storage.getItem(CREDENTIALS_KEY) || 'null');
     return {
       apiKey: value?.rememberApi && typeof value.apiKey === 'string' ? value.apiKey : '',
+      mealPlanApiKey: value?.rememberMealPlanApi && typeof value.mealPlanApiKey === 'string' ? value.mealPlanApiKey : '',
       cookie: value?.rememberCookie && typeof value.cookie === 'string' ? value.cookie : '',
       rememberApi: value?.rememberApi === true,
+      rememberMealPlanApi: value?.rememberMealPlanApi === true,
       rememberCookie: value?.rememberCookie === true,
     };
-  } catch { return {apiKey:'',cookie:'',rememberApi:false,rememberCookie:false}; }
+  } catch { return {apiKey:'',mealPlanApiKey:'',cookie:'',rememberApi:false,rememberMealPlanApi:false,rememberCookie:false}; }
 }
 
-export function saveCredentials(storage, {apiKey,cookie,rememberApi,rememberCookie}) {
-  if (!rememberApi && !rememberCookie) { storage.removeItem(CREDENTIALS_KEY); return; }
-  storage.setItem(CREDENTIALS_KEY, JSON.stringify({rememberApi,rememberCookie,
-    ...(rememberApi ? {apiKey} : {}), ...(rememberCookie ? {cookie} : {}),
+export function saveCredentials(storage, {apiKey,mealPlanApiKey,cookie,rememberApi,rememberMealPlanApi,rememberCookie}) {
+  if (!rememberApi && !rememberMealPlanApi && !rememberCookie) { storage.removeItem(CREDENTIALS_KEY); return; }
+  storage.setItem(CREDENTIALS_KEY, JSON.stringify({rememberApi,rememberMealPlanApi,rememberCookie,
+    ...(rememberApi ? {apiKey} : {}), ...(rememberMealPlanApi ? {mealPlanApiKey} : {}), ...(rememberCookie ? {cookie} : {}),
   }));
 }
 
