@@ -24,7 +24,26 @@ test('grouped tags preserve tiers and identities and reject missing meals, chang
   invalid[0].foods.best[0].foodName=foods[0].name;invalid[0].foods.best[0].portions=[];
   assert.throws(()=>mergeFoodSupplements(foods,invalid,'tags'),/字段/);
   const prompt=enrichmentPrompt(b.template,candidates,foods,'tags');
-  assert.match(prompt,/餐次标签的总体判定规则/);assert.match(prompt,/全球通用/);
+  assert.match(prompt,/餐次标签的总体判定规则/);
+  const input=JSON.parse(prompt.split('\n\n用户输入：\n\n')[1]);
+  assert.ok(Array.isArray(input));
+  assert.equal(input[0].slot,foods[0].slot);
+  assert.ok(!prompt.includes('"region"'));
+});
+
+test('tag parser accepts common AI wrappers and single-slot object responses',()=>{
+  const foods=[
+    {id:'oat',name:'燕麦粥',slot:'staple',preference:'best'},
+    {id:'rice',name:'糙米饭',slot:'staple',preference:'secondary'},
+  ];
+  const row={slot:'staple',foods:{
+    best:[{foodName:'燕麦粥',allergenTags:[],avoidanceTags:[],mealTags:['早餐']}],
+    secondary:[{foodName:'糙米饭',allergenTags:[],avoidanceTags:[],mealTags:['午餐','晚餐']}],
+  }};
+  assert.deepEqual(parseTaggingResult(foods,row).map(f=>f.foodName||f.name),['燕麦粥','糙米饭']);
+  assert.deepEqual(parseTaggingResult(foods,{taggedFoods:[row]}).map(f=>f.mealTags),[['早餐'],['午餐','晚餐']]);
+  assert.deepEqual(parseTaggingResult(foods,{result:{data:[row]}}).map(f=>f.tagsConfirmed),[true,true]);
+  assert.throws(()=>parseTaggingResult(foods,{Role:'候选食物过敏原、忌口与餐次标签标注大师',Rules:[]}),/提示词\/规则对象/);
 });
 
 test('meal eligibility filters before Best priority and blocks manual plan edits',()=>{

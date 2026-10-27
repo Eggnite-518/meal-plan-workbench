@@ -56,13 +56,23 @@ export function mergeEnrichmentBatch(current,snapshot,payload,scope='all') {
   }));
 }
 
+function enrichmentBatches(foods,batchSize,scope) {
+  if(scope==='tags')return foods.length?[foods]:[];
+  if(scope!=='tags') {
+    const batches=[];
+    for(let start=0;start<foods.length;start+=batchSize)batches.push(foods.slice(start,start+batchSize));
+    return batches;
+  }
+}
+
 export async function runEnrichmentBatches(foods,{batchSize=20,scope='all',signal,request,onProgress=()=>{},onBatch=()=>{}}) {
   foods=scope==='all'?foods.filter(needsEnrichment):enrichmentQueue(foods,scope);
-  const total=foods.length,totalBatches=Math.ceil(total/batchSize);
+  const batches=enrichmentBatches(foods,batchSize,scope);
+  const total=foods.length,totalBatches=batches.length;
   let completed=0;
-  for(let start=0;start<total;start+=batchSize) {
+  for(let index=0;index<batches.length;index++) {
     if(signal?.aborted)break;
-    const batch=clone(foods.slice(start,start+batchSize)),batchNumber=Math.floor(start/batchSize)+1;
+    const batch=clone(batches[index]),batchNumber=index+1;
     onProgress({completed,total,batchNumber,totalBatches,currentNames:batch.map(f=>f.name),status:'running'});
     const payload=await request(batch,batchNumber);
     mergeFoodSupplements(batch,payload,scope);

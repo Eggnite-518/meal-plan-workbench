@@ -259,7 +259,7 @@ function App(){
       validateBundleTemplate(current.template);
       const foods=enrichmentQueue(current.foods,scope);
       const taskLabel=scope==='nutrition'?'补营养':scope==='tags'?'补过敏原、忌口及餐次标签':'补可执行份量';
-      setEnrichProgress({completed:0,total:foods.length,status:'running',batchNumber:0,totalBatches:Math.ceil(foods.length/20),taskLabel,scope});
+      setEnrichProgress({completed:0,total:foods.length,status:'running',batchNumber:0,totalBatches:scope==='tags'&&foods.length?1:Math.ceil(foods.length/20),taskLabel,scope});
       if(!foods.length){setEnrichProgress({completed:0,total:0,status:'completed',batchNumber:0,totalBatches:0,taskLabel,scope});notify(`没有需要${taskLabel}的记录，已有结果已保留`);return;}
       if(!config.apiKey){setEnrichProgress(p=>({...p,status:'paused'}));setShowApi(true);return;}
       const customPrompt=scope==='nutrition'?enrichPrompt:scopedPrompts[scope];

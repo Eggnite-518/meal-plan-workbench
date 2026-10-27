@@ -137,6 +137,33 @@ test('tag and portion tasks work independently even before nutrition is availabl
   assert.equal(foods[0].portions[0].grams,150);
 });
 
+test('tag enrichment sends the full pending food list in one request',async()=>{
+  const foods=[
+    {...pending(),id:'staple-best',name:'燕麦粥',slot:'staple',preference:'best',tagsComplete:false},
+    {...pending(),id:'staple-secondary',name:'荞麦粥',slot:'staple',preference:'secondary',tagsComplete:false},
+    {...pending(),id:'protein-best',name:'水煮鸡蛋',slot:'protein',preference:'best',tagsComplete:false},
+  ];
+  const batches=[];
+  await runEnrichmentBatches(foods,{scope:'tags',batchSize:20,
+    request:async batch=>{
+      batches.push(batch.map(f=>`${f.slot}|${f.preference||'best'}|${f.name}`));
+      return [
+        {slot:'staple',foods:{
+          best:[{foodName:'燕麦粥',allergenTags:[],avoidanceTags:[],mealTags:['早餐']}],
+          secondary:[{foodName:'荞麦粥',allergenTags:[],avoidanceTags:[],mealTags:['早餐']}],
+        }},
+        {slot:'protein',foods:{
+          best:[{foodName:'水煮鸡蛋',allergenTags:[],avoidanceTags:[],mealTags:['早餐']}],
+          secondary:[],
+        }},
+      ];
+    },
+  });
+  assert.deepEqual(batches,[
+    ['staple|best|燕麦粥','staple|secondary|荞麦粥','protein|best|水煮鸡蛋'],
+  ]);
+});
+
 test('scoped tasks reject cross-step fields and preserve existing data',()=>{
   const food={...patch(pending()),dataSource:'real_library',tagsComplete:false};
   const identity={id:food.id,name:food.name,slot:food.slot};
